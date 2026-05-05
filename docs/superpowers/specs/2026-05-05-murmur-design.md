@@ -78,7 +78,10 @@ It is a Wispr Flow / Superwhisper alternative, with the same core experience but
 - **Click menu bar icon** → menu with: pause, current cleanup mode, history, settings, quit.
 
 ### Failure modes the user sees
+- **Hotkey not detected:** menu bar shows a yellow warning icon; clicking opens a "diagnose hotkey" dialog with options to change keys or restart the listener.
+- **Cold start (model still loading):** pill shows "Warming up…" instead of "Listening…"; recording auto-starts the moment the model is ready (typically < 5s after launch).
 - **No mic input detected:** pill shows "No audio — check mic" and aborts.
+- **Recording exceeds 5 minutes:** auto-stops with pill message "5 min limit — processing".
 - **Whisper failure:** "Transcription failed" notification; nothing pasted.
 - **Gemini unreachable / rate-limited:** raw transcript is pasted with a small notification "(unpolished — Gemini unreachable)". Never lose a dictation.
 - **Privacy mode active:** raw transcript pastes; pill shows a 🔒 icon.
@@ -106,19 +109,20 @@ It is a Wispr Flow / Superwhisper alternative, with the same core experience but
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Components — one job each
+### Components — one job each (7 modules + 2 entry points)
 
-1. **`hotkey.py`** — global key listener via `pynput`. Distinguishes tap (≤ 250ms) vs hold. Emits `start_recording` / `stop_recording` to a thread-safe queue.
-2. **`audio.py`** — captures mic via `sounddevice` to an in-memory `numpy` buffer at 16 kHz mono. Voice-activity-detection (Silero VAD via `torch`) trims leading/trailing silence.
-3. **`transcribe.py`** — wraps `faster-whisper`. Loads model once at startup. Default `base.en` (74 MB), configurable to `small.en` (244 MB).
-4. **`clean.py`** — calls Gemini 2.0 Flash with the prompt for the active cleanup mode. Streams response. Falls back to raw transcript on failure.
-5. **`output.py`** — copies clean text to clipboard, restores the previous clipboard contents 200ms after pasting. Triggers ⌘V via `CGEventCreateKeyboardEvent`.
-6. **`menubar.py`** — rumps menu with: status, cleanup mode (4 options), pause, history (last 20 entries; clicking an entry re-copies that text to clipboard so the user can paste it manually), settings, quit.
-7. **`pill.py`** — borderless `NSPanel` floating overlay at bottom-center of screen. Shows recording state, audio level meter, and current phase ("Listening…" / "Transcribing…" / "Polishing…"). Auto-fades on idle.
-8. **`settings.py`** — JSON config at `~/Library/Application Support/Murmur/config.json`. Hotkey, model size, default cleanup mode, audio storage on/off, custom vocab path.
-9. **`history.py`** — append-only JSONL at `~/Library/Application Support/Murmur/history.jsonl`. Each entry: `{ts, raw, cleaned, mode, audio_path}`. Trims to last 20 entries on write.
-10. **`onboarding.py`** — first-run flow (Tk window). Sets up `.env`, walks through permissions.
-11. **`app.py`** — wires everything together. Owns the worker thread pool. Single entry point.
+1. **`hotkey.py`** — global key listener via `pynput`. Distinguishes tap (≤ 250ms) vs hold. Emits `start_recording` / `stop_recording` to a thread-safe queue. On startup, runs a self-check confirming the listener is reachable. If not, surfaces a "hotkey not detected" banner in the menu bar with a one-click "diagnose" action.
+2. **`pipeline.py`** — combines audio capture + transcription. `sounddevice` records mic to a 16 kHz mono ring buffer with a hard **5-minute cap** (then auto-stops with a "5 min limit" pill message). VAD trimming uses `faster-whisper`'s built-in `vad_filter=True` (Silero ONNX, **no torch dependency**). Apple Silicon → `compute_type="int8"`, model `small.en`. Intel → `compute_type="int8"`, model `base.en`. Chip detected at install time; configurable later.
+3. **`clean.py`** — calls Gemini 2.0 Flash with the prompt for the active cleanup mode. Streams response. Falls back to raw transcript on any failure.
+4. **`output.py`** — copies clean text to clipboard and triggers ⌘V via `CGEventCreateKeyboardEvent`. **No clipboard auto-restore** — the dictation stays on the clipboard so a follow-up ⌘V re-pastes it, and any clipboard manager preserves prior content naturally.
+5. **`ui/bar.py`** — rumps menu: status, cleanup mode (4 options), pause, history (last 20 entries; clicking re-copies to clipboard), settings, **Help → Copy diagnostics**, quit. Diagnostics action assembles last 200 lines of `murmur.log` + config (with `GEMINI_API_KEY` redacted) into the clipboard.
+6. **`ui/pill.py`** — borderless `NSPanel` floating overlay. Shows phase: "Warming up…" / "Listening…" / "Transcribing…" / "Polishing…" / "Queued (1)". NSPanel updates marshalled to the Cocoa main thread. **Fallback**: if NSPanel init fails on a given macOS version, falls back to a Tk text-only overlay.
+7. **`settings.py`** — JSON config at `~/Library/Application Support/Murmur/config.json`. Always writes `"schema_version": 1` for future migrations. Settings UI is a small Tk window reusing onboarding form widgets.
+8. **`history.py`** — append-only JSONL. Each entry: `{ts, raw, cleaned, mode, audio_path}`. Trims to last 20 on write.
+
+Plus two entry points:
+- **`onboarding.py`** — first-run flow (Tk window). 5 steps, walks through key + permissions + hotkey + audio preference + first-dictation test. Re-runnable from menu bar.
+- **`app.py`** — wires everything together. Owns the worker thread pool. Single entry point.
 
 ### Threading model
 
@@ -131,7 +135,13 @@ Three long-lived threads + a worker pool:
 | Audio | Captures mic into a ring buffer when recording is active. |
 | Worker pool (size 1) | Runs transcribe → clean → output as a single sequential pipeline per dictation, so two fast taps don't race. |
 
-State transitions guarded by a single `threading.Lock` on the `RecordingState` enum (`IDLE → RECORDING → TRANSCRIBING → CLEANING → PASTING → IDLE`).
+State transitions guarded by a single `threading.Lock` on the `RecordingState` enum (`COLD_START → IDLE → RECORDING → TRANSCRIBING → CLEANING → PASTING → IDLE`). `COLD_START` is the brief window after launch while the Whisper model loads; the pill shows "Warming up…" if the user hits the hotkey during this state, then auto-starts recording the moment the model is ready.
+
+**Concurrent-tap rules:**
+- Tap during `RECORDING` → stop & process current dictation (normal toggle).
+- Tap during `TRANSCRIBING` → queue the new tap; pill shows "Queued (1)". When the current pipeline finishes, the new recording starts immediately.
+- Tap during `CLEANING` or `PASTING` → cancel the in-flight cleanup (paste raw transcript instead), finish the paste, then immediately start the new recording. Avoids the user feeling like the app froze.
+- Queue depth capped at 1. A second queued tap during a queue replaces the first, with a pill flash.
 
 ### Data flow (single dictation)
 
@@ -154,7 +164,7 @@ worker: gemini cleanup (skipped if privacy mode) → cleaned text
    ↓
 state: CLEANING → PASTING
    ↓
-worker: clipboard ← cleaned text → CGEvent ⌘V → restore old clipboard
+worker: clipboard ← cleaned text → CGEvent ⌘V (no clipboard restore)
    ↓
 worker: history append (+ audio file if storage enabled and privacy off)
    ↓
@@ -194,17 +204,22 @@ Passed to Gemini in the cleanup prompt as: *"The speaker uses these terms — pr
 
 ```json
 {
+  "schema_version": 1,
   "hotkey": "right_option",
   "replay_hotkey": "cmd+option+v",
   "tap_threshold_ms": 250,
-  "model": "base.en",
+  "model": "small.en",
+  "compute_type": "int8",
   "default_mode": "email",
   "store_audio": false,
   "audio_retention_days": 7,
   "history_size": 20,
+  "max_recording_seconds": 300,
   "vocabulary_path": "~/Library/Application Support/Murmur/vocabulary.txt"
 }
 ```
+
+`model` and `compute_type` are written by the installer based on detected chip. `schema_version` enables clean migration when the format changes in v2.
 
 `~/.murmur/.env` (chmod 600, gitignored):
 
@@ -232,6 +247,7 @@ Onboarding detects which are missing by attempting the relevant API (e.g. postin
 | History (20 entries) | `…/history.jsonl` | ~50 KB |
 | Audio cache (20 × 20s WAV) | `…/audio/*.wav` | ~13 MB max |
 | Whisper model | `~/.cache/huggingface/...` | 74 MB (base.en) — 244 MB (small.en) |
+| Total install footprint | `~/.murmur/venv/` + model | ~600 MB on Apple Silicon (small.en), ~430 MB on Intel (base.en). No torch — Silero VAD ships as ONNX inside `faster-whisper`. |
 | Logs | `~/Library/Logs/Murmur/murmur.log` | rotates at 5 MB |
 
 Auto-purge: audio files older than `audio_retention_days` deleted on app launch.
@@ -245,8 +261,9 @@ Auto-purge: audio files older than `audio_retention_days` deleted on app launch.
 | Whisper crashes | Log error; pill: "Transcription failed"; abort |
 | Gemini API error (any) | Paste raw transcript; small toast: "(unpolished — Gemini unreachable)" |
 | Gemini rate limit | Same as above |
-| Clipboard restore fails | Log only; original clipboard already overwritten |
 | Hotkey listener dies | Auto-restart once; if fails twice, surface a menu-bar warning |
+| NSPanel pill init fails | Fall back to a Tk text-only overlay; log the underlying NSPanel error |
+| Whisper model download fails (install) | Retry 3× with exponential backoff (2s / 8s / 30s); on final failure, install.sh prints exact resume command |
 
 All errors append to `~/Library/Logs/Murmur/murmur.log` with timestamp + traceback. Log level configurable.
 
@@ -260,11 +277,11 @@ curl -fsSL https://raw.githubusercontent.com/<user>/murmur/main/install.sh | bas
 ```
 
 **`install.sh` does, in order:**
-1. Verify macOS ≥ 13. Verify arch (Apple Silicon or Intel).
-2. Verify Python 3.11+. If missing, install via Homebrew (and install Homebrew if missing).
+1. Verify macOS ≥ 13. Detect arch (Apple Silicon → small.en, Intel → base.en) and write the right model name into the initial config.
+2. Verify Python 3.11+. If missing, install via Homebrew (install Homebrew first if missing).
 3. Clone repo to `~/.murmur/src/`.
 4. Create venv at `~/.murmur/venv/`. `pip install -r requirements.txt`.
-5. Pre-download the default Whisper model (`base.en`).
+5. Pre-download the chosen Whisper model with **3-retry exponential backoff** (2s / 8s / 30s). On final failure, prints the exact resume command and exits non-zero.
 6. Write a launchd plist to `~/Library/LaunchAgents/com.murmur.app.plist` so Murmur auto-starts at login.
 7. Launch Murmur for the first time → onboarding window opens.
 
@@ -293,17 +310,19 @@ Murmur/
 ├── src/
 │   └── murmur/
 │       ├── __init__.py
-│       ├── app.py              # entry point
+│       ├── app.py              # entry point + state machine
+│       ├── paths.py            # single source of truth for all I/O paths
 │       ├── settings.py
 │       ├── hotkey.py
-│       ├── audio.py
-│       ├── transcribe.py
+│       ├── pipeline.py         # audio capture + Whisper transcription
 │       ├── clean.py
 │       ├── output.py
-│       ├── menubar.py
-│       ├── pill.py
 │       ├── history.py
 │       ├── onboarding.py
+│       ├── ui/
+│       │   ├── __init__.py
+│       │   ├── bar.py          # rumps menu bar
+│       │   └── pill.py         # NSPanel floating pill (with Tk fallback)
 │       ├── prompts/
 │       │   ├── email.txt
 │       │   ├── chat.txt
@@ -311,7 +330,11 @@ Murmur/
 │       │   └── raw.txt
 │       └── assets/
 │           ├── icon-idle.png
-│           └── icon-recording.png
+│           ├── icon-recording.png
+│           └── onboarding/     # screenshots for the API key walkthrough
+│               ├── 01-aistudio-home.png
+│               ├── 02-create-key.png
+│               └── 03-copy-key.png
 ├── packaging/
 │   └── com.murmur.app.plist     # launchd template
 └── tests/
@@ -326,18 +349,19 @@ Murmur/
 | Concern | Library | Why |
 |---|---|---|
 | Transcription | `faster-whisper` | 4× faster than openai-whisper, lower memory, same models |
-| VAD | `silero-vad` (via torch) | Trims silence pre-Whisper, saves time |
+| VAD | built-in (`vad_filter=True` in faster-whisper) | Silero ONNX, no torch dependency. Saves ~1 GB. |
 | Hotkey | `pynput` | Reliable global key listener on macOS |
 | Audio capture | `sounddevice` | Cleaner API than pyaudio, no PortAudio install pain |
 | Menu bar | `rumps` | The standard for Python macOS menu bar apps |
 | Floating pill | `pyobjc` (NSPanel) | Native window, transparent, click-through |
+| Pill fallback | `tkinter` | If NSPanel init fails on a given macOS version |
 | Clipboard + paste | `pyperclip` + `Quartz` (CGEvent) | Set clipboard, simulate ⌘V |
 | Cleanup LLM | `google-generativeai` | Official Gemini SDK |
 | Onboarding UI | `tkinter` | Bundled with Python; no extra deps |
 | Config / env | stdlib `json` + `python-dotenv` | Familiar |
 | Logging | stdlib `logging` with `RotatingFileHandler` | Simple |
 
-Total install: ~600 MB including the Whisper model and torch. Acceptable for a one-time download.
+Total install: ~600 MB on Apple Silicon, ~430 MB on Intel. One-time download.
 
 ## 13. Testing
 
@@ -390,7 +414,7 @@ For implementation efficiency and reviewability:
 
 - [ ] Install via one terminal command on a clean macOS 13+ machine
 - [ ] First-run onboarding successfully captures Gemini key + 3 permissions
-- [ ] Tap Right Option → speak → cleaned text appears at cursor in < 4 seconds for a 10-second dictation (base.en)
+- [ ] Tap Right Option → speak → cleaned text appears at cursor in **< 4 seconds on Apple Silicon** (small.en + int8 + Metal) **or < 8 seconds on Intel** (base.en + int8) for a 10-second dictation
 - [ ] Hold Right Option for push-to-talk works in any focused app
 - [ ] All four cleanup modes produce visibly different output for the same input
 - [ ] Custom vocabulary file influences cleanup output
@@ -400,5 +424,9 @@ For implementation efficiency and reviewability:
 - [ ] Auto-starts at login after reboot
 - [ ] Menu bar icon shows recording state
 - [ ] Floating pill appears only while recording / processing
-- [ ] Total install footprint ≤ 700 MB
+- [ ] Total install footprint ≤ 700 MB (Apple Silicon) / ≤ 500 MB (Intel)
+- [ ] Hotkey self-check passes on launch; warning surfaces in menu bar if it doesn't
+- [ ] "Help → Copy diagnostics" produces a shareable, key-redacted log bundle
+- [ ] Recording auto-stops at 5 minutes with a clear pill message
+- [ ] Concurrent-tap rules behave as specified (queue / cancel-cleanup / replace-queued)
 - [ ] Idle CPU < 1%, idle RAM < 300 MB (Whisper model loaded but not running)
