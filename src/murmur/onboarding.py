@@ -26,9 +26,13 @@ def _test_gemini_key(api_key: str) -> tuple[bool, str]:
     try:
         genai.configure(api_key=api_key)
         m = genai.GenerativeModel("gemini-2.0-flash")
-        r = m.generate_content("Reply with the single word: ok")
+        r = m.generate_content(
+            "Reply with the single word: ok",
+            request_options={"timeout": 15},
+        )
         return True, r.text.strip()
     except Exception as exc:
+        logger.warning("Gemini key test failed: %s", exc)
         return False, str(exc)
 
 
@@ -114,12 +118,16 @@ class OnboardingWindow:
 
             def worker():
                 ok, msg = _test_gemini_key(key)
-                if ok:
-                    _write_env(key)
-                    status.config(text=f"✓ Working ({msg})", fg="green")
-                    next_btn.config(state="normal")
-                else:
-                    status.config(text=f"✗ {msg[:120]}", fg="red")
+
+                def apply():
+                    if ok:
+                        _write_env(key)
+                        status.config(text=f"✓ Working ({msg})", fg="green")
+                        next_btn.config(state="normal")
+                    else:
+                        status.config(text=f"✗ {msg[:120]}", fg="red")
+
+                self._root.after(0, apply)
 
             threading.Thread(target=worker, daemon=True).start()
 
