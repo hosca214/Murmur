@@ -23,17 +23,25 @@ def _write_env(api_key: str) -> None:
 
 
 def _test_gemini_key(api_key: str) -> tuple[bool, str]:
+    from murmur.clean import MODELS_FALLBACK
+    last_err: Exception | None = None
     try:
         genai.configure(api_key=api_key)
-        m = genai.GenerativeModel("gemini-2.0-flash")
-        r = m.generate_content(
-            "Reply with the single word: ok",
-            request_options={"timeout": 15},
-        )
-        return True, r.text.strip()
     except Exception as exc:
-        logger.warning("Gemini key test failed: %s", exc)
         return False, str(exc)
+    for name in MODELS_FALLBACK:
+        try:
+            m = genai.GenerativeModel(name)
+            r = m.generate_content(
+                "Reply with the single word: ok",
+                request_options={"timeout": 15},
+            )
+            return True, f"ok via {name}"
+        except Exception as exc:
+            last_err = exc
+            logger.debug("Key test: %s unavailable (%s)", name, exc)
+    logger.warning("Gemini key test: no model reachable: %s", last_err)
+    return False, str(last_err) if last_err else "no model reachable"
 
 
 def _open_settings_pane(pane: str) -> None:

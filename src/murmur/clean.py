@@ -1,13 +1,19 @@
 import logging
 from importlib import resources
 from pathlib import Path
+from typing import Optional
 
 import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 _last_polished = False
 _VALID_MODES = {"email", "chat", "notes", "raw"}
-_MODEL_NAME = "gemini-2.0-flash"
+MODELS_FALLBACK = (
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-latest",
+)
+_working_model: str = ""
 
 
 def was_polished() -> bool:
@@ -44,14 +50,25 @@ def clean(transcript: str, *, mode: str, api_key: str, vocabulary: list[str]) ->
         vocabulary=_format_vocabulary(vocabulary),
         transcript=transcript,
     )
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(_MODEL_NAME)
-        response = model.generate_content(prompt)
-        cleaned = response.text.strip()
-        _last_polished = True
-        return cleaned
-    except Exception as exc:
-        logger.warning("Gemini cleanup failed; falling back to raw: %s", exc)
-        _last_polished = False
-        return transcript
+    global _working_model
+    genai.configure(api_key=api_key)
+    candidates = []
+    if _working_model:
+        candidates.append(_working_model)
+    candidates.extend(m for m in MODELS_FALLBACK if m != _working_model)
+    last_exc: Optional[Exception] = None
+    for name in candidates:
+        try:
+            model = genai.GenerativeModel(name)
+            response = model.generate_content(prompt, request_options={"timeout": 30})
+            _working_model = name
+            _last_polished = True
+            return response.text.strip()
+        except Exception as exc:
+            last_exc = exc
+            logger.debug("Gemini model %s unavailable: %s", name, exc)
+            if _working_model == name:
+                _working_model = ""
+    logger.warning("Gemini cleanup failed; falling back to raw: %s", last_exc)
+    _last_polished = False
+    return transcript
