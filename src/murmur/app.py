@@ -58,6 +58,8 @@ class MurmurApp:
             on_hold_end=self._handle_hold_end,
         )
         self._hotkey.start()
+        self._replay_listener = self._make_replay_listener()
+        self._replay_listener.start()
         self._bar = MenuBar(
             on_mode_change=self._set_mode,
             on_pause_toggle=self._toggle_pause,
@@ -194,9 +196,21 @@ class MurmurApp:
     def _rerun_onboarding(self) -> None:
         self._open_settings()
 
+    def _make_replay_listener(self):
+        from pynput import keyboard
+
+        def on_activate():
+            entry = history.latest()
+            if entry:
+                output.paste_text(entry.cleaned)
+
+        return keyboard.GlobalHotKeys({"<cmd>+<alt>+v": on_activate})
+
     def _quit(self) -> None:
         if self._hotkey:
             self._hotkey.stop()
+        if hasattr(self, "_replay_listener"):
+            self._replay_listener.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
         if self._bar:
             self._bar.quit_application()
