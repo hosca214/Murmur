@@ -38,13 +38,37 @@ It is a Wispr Flow / Superwhisper alternative, with the same core experience but
 
 ### First-run onboarding
 1. User runs the install command (see §10).
-2. App launches a small onboarding window:
-   - "Paste your Gemini API key" (with a link to `aistudio.google.com/apikey`)
-   - "Grant Microphone, Accessibility, and Input Monitoring permissions" (each opens the relevant System Settings pane)
-   - "Choose your hotkey" (default Right Option, configurable)
-   - "Keep audio of dictations so you can replay mistranscriptions? Yes / No" (default No)
-   - "Test your hotkey now — say something" (sanity check)
-3. Onboarding window closes; menu bar icon stays.
+2. App launches a multi-step onboarding window. Each step has a "Next" button that's disabled until the step is complete.
+
+   **Step 1 — Gemini API key (with built-in walkthrough)**
+
+   The window shows a numbered guide alongside a "Get my key" button that auto-opens the right page in the user's browser. Each step has a screenshot thumbnail (stored in `src/murmur/assets/onboarding/`) so the user sees what to look for:
+
+   1. *Click "Get my key" — this opens **aistudio.google.com/apikey** in your browser.*
+   2. *Sign in with your Google account if you aren't already.*
+   3. *Click the blue **"Create API key"** button (top-right of the page).*
+   4. *Choose **"Create API key in new project"** if asked. (You can also pick an existing project — both work.)*
+   5. *Google shows you a key starting with `AIza...`. Click the copy icon next to it.*
+   6. *Come back to this window and paste the key in the field below.*
+   7. *Click **Test key** — Murmur sends one tiny test request to verify it works.*
+
+   The paste field validates format (`AIza` prefix, length) immediately. The "Test key" button makes a minimal Gemini call (e.g. cleanup of "hello world") and shows a green check or a red error message with the actual API response. "Next" is enabled once the test succeeds.
+
+   A small disclosure below the field: *"Your key is saved at `~/.murmur/.env` on this Mac only. It never gets sent anywhere except to Google. The free tier gives you 1 million tokens/day — far more than you'll use."*
+
+   **Step 2 — Grant permissions**
+   "Murmur needs three macOS permissions: Microphone, Accessibility, Input Monitoring." Three rows, each with a status indicator (✗ / ✓) and an "Open Settings" button that jumps to the right pane. Step refreshes automatically every 2 seconds; "Next" is enabled when all three show ✓.
+
+   **Step 3 — Choose your hotkey**
+   Default Right Option. Dropdown to change. A "Press the key now to test" field that confirms the chosen key fires.
+
+   **Step 4 — Audio storage preference**
+   "Want Murmur to keep a few seconds of audio for your last 20 dictations? Useful if a transcript looks wrong and you want to remember what you actually said. Audio never leaves your Mac." Default: No. Privacy mode overrides this anyway.
+
+   **Step 5 — Try it**
+   "Press your hotkey and say 'Hello, this is my first Murmur dictation.'" Shows the live transcript and cleaned output side-by-side so the user sees the difference cleanup makes. Done button enables when one successful dictation is logged.
+
+3. Onboarding window closes; menu bar icon stays. Re-runnable anytime from menu bar → Settings → "Re-run onboarding".
 
 ### Normal use
 - **Tap Right Option** → recording starts; floating pill shows waveform; tap again to stop.
