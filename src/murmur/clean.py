@@ -18,11 +18,12 @@ MODELS_FALLBACK = (
 )
 _GEN_CONFIG = {"max_output_tokens": 8192, "temperature": 0.0}
 _DEAD_MODEL_RETRY_S = 3600.0
-_dead_models: dict[str, float] = {}
+_dead_models: dict[str, float] = {}  # model name -> timestamp when it may be retried
 _MAX_TOKENS_FINISH = 2  # google.generativeai FinishReason.MAX_TOKENS
 
 _FILLER_PATTERN = re.compile(r"\b(?:um+|uh+|uhm+|erm+|hmm+)\b[,.]?\s*", re.IGNORECASE)
 _QUOTA_PATTERN = re.compile(r"\b429\b|quota|resource_exhausted|rate.?limit", re.IGNORECASE)
+_RETRY_DELAY_PATTERN = re.compile(r"retry_delay\s*\{\s*seconds:\s*(\d+)", re.IGNORECASE)
 
 
 def was_polished() -> bool:
@@ -106,13 +107,22 @@ def local_polish(text: str) -> str:
 
 
 def _model_is_dead(name: str) -> bool:
-    marked = _dead_models.get(name)
-    if marked is None:
+    retry_at = _dead_models.get(name)
+    if retry_at is None:
         return False
-    if time.time() - marked > _DEAD_MODEL_RETRY_S:
+    if time.time() >= retry_at:
         del _dead_models[name]
         return False
     return True
+
+
+def _quota_retry_after_s(exc: Exception) -> float:
+    """A per-minute 429 says 'retry in ~20s'; benching the model for an hour
+    would silently degrade quality. Honor the API's own retry hint."""
+    m = _RETRY_DELAY_PATTERN.search(str(exc))
+    if m:
+        return max(float(m.group(1)), 30.0) + 5.0
+    return _DEAD_MODEL_RETRY_S
 
 
 def clean(transcript: str, *, mode: str, api_key: str, vocabulary: list[str]) -> str:
@@ -162,8 +172,9 @@ def clean(transcript: str, *, mode: str, api_key: str, vocabulary: list[str]) ->
             last_exc = exc
             logger.debug("Gemini model %s failed: %s", name, exc)
             if _is_quota_error(exc):
-                _dead_models[name] = time.time()
-                logger.info("Marked %s as quota-exhausted; retrying after an hour", name)
+                retry_after = _quota_retry_after_s(exc)
+                _dead_models[name] = time.time() + retry_after
+                logger.info("Marked %s quota-exhausted; retrying in %.0fs", name, retry_after)
     logger.warning("All Gemini models failed or hallucinated; local polish. Last error: %s", last_exc)
     _last_polished = False
     return local_polish(transcript)

@@ -170,3 +170,13 @@ def test_warm_if_stale_fires_after_idle(mocker):
     clean.warm_if_stale("key")
     warm.assert_called_once_with("key")
     clean._last_request_ts = old_ts
+
+
+def test_quota_retry_honors_api_hint():
+    exc = RuntimeError("429 You exceeded your quota ... retry_delay {\n  seconds: 21\n}")
+    assert 30 <= clean._quota_retry_after_s(exc) <= 60
+
+
+def test_quota_retry_defaults_to_an_hour_without_hint():
+    exc = RuntimeError("429 quota exceeded")
+    assert clean._quota_retry_after_s(exc) == clean._DEAD_MODEL_RETRY_S
