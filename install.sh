@@ -78,11 +78,9 @@ sed \
     -e "s|__LOG_ERR__|$LOG_DIR/stderr.log|g" \
     "$SRC_DIR/packaging/com.murmur.app.plist" > "$PLIST_PATH"
 
+# load starts the app once via RunAtLoad; do not also launch it manually
 launchctl unload "$PLIST_PATH" 2>/dev/null || true
 launchctl load "$PLIST_PATH"
 
-bold "Launching Murmur…"
-"$VENV_DIR/bin/python" -m murmur &
-
-bold "Done. The Murmur menu bar icon should appear shortly."
-echo "If the onboarding window doesn't open, run: $VENV_DIR/bin/python -m murmur"
+bold "Done. Look for 'Murmur' in your menu bar."
+echo "First run opens onboarding. To start it by hand: $VENV_DIR/bin/python -m murmur"
