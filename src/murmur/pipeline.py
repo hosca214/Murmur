@@ -85,6 +85,25 @@ def save_wav(audio: np.ndarray, path: Path) -> None:
         f.writeframes(pcm16.tobytes())
 
 
+# Whisper-mode support: quiet speech (whispering, low mic gain) records at
+# peaks of ~0.005-0.05 and the VAD discards it as non-speech. Normalizing to
+# a strong peak first makes whispered dictation work. Recordings whose peak
+# is below the noise floor are left alone so amplified room hiss can't turn
+# into hallucinated text.
+_NORMALIZE_TARGET = 0.9
+_NORMALIZE_BELOW_PEAK = 0.5
+_NOISE_FLOOR_PEAK = 0.003
+
+
+def prepare_audio(audio: np.ndarray) -> np.ndarray:
+    if audio.size == 0:
+        return audio
+    peak = float(np.max(np.abs(audio)))
+    if _NOISE_FLOOR_PEAK <= peak < _NORMALIZE_BELOW_PEAK:
+        return np.clip(audio * (_NORMALIZE_TARGET / peak), -1.0, 1.0)
+    return audio
+
+
 class Transcriber:
     def __init__(self, model_name: str, compute_type: str) -> None:
         logger.info("Loading Whisper model %s (%s)", model_name, compute_type)
@@ -102,10 +121,10 @@ class Transcriber:
         if audio.size == 0:
             return ""
         segments, _info = self._model.transcribe(
-            audio,
+            prepare_audio(audio),
             language="en",
             beam_size=1,
             vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 300},
+            vad_parameters={"min_silence_duration_ms": 300, "threshold": 0.2},
         )
         return " ".join(seg.text.strip() for seg in segments).strip()

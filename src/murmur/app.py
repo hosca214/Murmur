@@ -175,7 +175,8 @@ class MurmurApp:
         if self._sm.state != RecordingState.RECORDING:
             return
         bars = " ▁▂▃▄▅▆▇█"
-        scaled = min(1.0, rms * 12.0)
+        # Perceptual curve so whispering (rms ~0.0005) still moves the meter
+        scaled = min(1.0, (max(rms, 0.0) / 0.05) ** 0.4)
         idx = int(scaled * (len(bars) - 1))
         self._levels.append(bars[idx])
         self._pill.show(f"Listening {''.join(self._levels)}")
