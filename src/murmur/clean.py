@@ -52,11 +52,21 @@ def load_vocabulary(path: str) -> list[str]:
     return out
 
 
+# Connections to Gemini go cold after a few idle minutes and re-establishing
+# one adds 1-3s to the next cleanup. Recording time is free cover: firing a
+# tiny warm request when recording STARTS means the connection is hot by the
+# time the transcript needs polishing.
+_WARM_MAX_AGE_S = 180.0
+_last_request_ts = 0.0
+
+
 def warm(api_key: str) -> None:
     """Fire one tiny request to warm the TLS connection and verify the key.
 
-    Called once at startup off the critical path; failures are logged only.
+    Called at startup and (via warm_if_stale) when recording starts;
+    failures are logged only.
     """
+    global _last_request_ts
     if not api_key:
         return
     try:
@@ -67,9 +77,16 @@ def warm(api_key: str) -> None:
             request_options={"timeout": 10},
             generation_config={"max_output_tokens": 5, "temperature": 0.0},
         )
+        _last_request_ts = time.time()
         logger.info("Gemini warm-up ok (%s)", MODELS_FALLBACK[0])
     except Exception as exc:
         logger.warning("Gemini warm-up failed: %s", exc)
+
+
+def warm_if_stale(api_key: str) -> None:
+    """Warm the connection only if it has likely gone idle."""
+    if time.time() - _last_request_ts > _WARM_MAX_AGE_S:
+        warm(api_key)
 
 
 def local_polish(text: str) -> str:
@@ -99,7 +116,7 @@ def _model_is_dead(name: str) -> bool:
 
 
 def clean(transcript: str, *, mode: str, api_key: str, vocabulary: list[str]) -> str:
-    global _last_polished
+    global _last_polished, _last_request_ts
     if mode not in _VALID_MODES:
         raise ValueError(f"Unknown mode: {mode}")
     if not transcript.strip():
@@ -128,6 +145,7 @@ def clean(transcript: str, *, mode: str, api_key: str, vocabulary: list[str]) ->
                 request_options={"timeout": 5},
                 generation_config=_GEN_CONFIG,
             )
+            _last_request_ts = time.time()
             if _hit_token_cap(response):
                 logger.warning("Model %s hit the output token cap; trying next model", name)
                 continue

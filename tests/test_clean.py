@@ -150,3 +150,23 @@ def test_load_vocabulary_skips_comment_lines(tmp_path):
 def test_load_vocabulary_missing_file_returns_empty(tmp_path):
     out = clean.load_vocabulary(str(tmp_path / "nope.txt"))
     assert out == []
+
+
+def test_warm_if_stale_skips_when_connection_is_fresh(mocker):
+    import time as _time
+    warm = mocker.patch("murmur.clean.warm")
+    old_ts = clean._last_request_ts
+    clean._last_request_ts = _time.time()
+    clean.warm_if_stale("key")
+    warm.assert_not_called()
+    clean._last_request_ts = old_ts
+
+
+def test_warm_if_stale_fires_after_idle(mocker):
+    import time as _time
+    warm = mocker.patch("murmur.clean.warm")
+    old_ts = clean._last_request_ts
+    clean._last_request_ts = _time.time() - clean._WARM_MAX_AGE_S - 1
+    clean.warm_if_stale("key")
+    warm.assert_called_once_with("key")
+    clean._last_request_ts = old_ts

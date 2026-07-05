@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 import time
 import wave
@@ -107,14 +108,18 @@ def prepare_audio(audio: np.ndarray) -> np.ndarray:
 class Transcriber:
     def __init__(self, model_name: str, compute_type: str) -> None:
         logger.info("Loading Whisper model %s (%s)", model_name, compute_type)
+        threads = min(8, os.cpu_count() or 4)
         try:
             # Cached model first: no network round trip, works offline
             self._model = WhisperModel(
-                model_name, device="cpu", compute_type=compute_type, local_files_only=True
+                model_name, device="cpu", compute_type=compute_type,
+                local_files_only=True, cpu_threads=threads,
             )
         except Exception:
             logger.info("Model not cached yet; downloading %s", model_name)
-            self._model = WhisperModel(model_name, device="cpu", compute_type=compute_type)
+            self._model = WhisperModel(
+                model_name, device="cpu", compute_type=compute_type, cpu_threads=threads
+            )
         logger.info("Whisper model loaded")
 
     def transcribe(self, audio: np.ndarray) -> str:
@@ -124,6 +129,10 @@ class Transcriber:
             prepare_audio(audio),
             language="en",
             beam_size=1,
+            # Dictations are single utterances: skipping timestamps and
+            # cross-window conditioning is faster and hallucinates less
+            without_timestamps=True,
+            condition_on_previous_text=False,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 300, "threshold": 0.2},
         )

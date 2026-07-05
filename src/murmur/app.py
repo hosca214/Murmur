@@ -170,6 +170,13 @@ class MurmurApp:
         if self._bar:
             self._bar.set_recording(True)
         self._recorder.start(on_auto_stop=self._on_recording_max)
+        if not self._privacy:
+            # Warm the Gemini connection while the user is still speaking so
+            # the polish step doesn't pay 1-3s of connection setup
+            threading.Thread(
+                target=clean.warm_if_stale, args=(self._api_key,),
+                daemon=True, name="gemini-warm",
+            ).start()
 
     def _on_audio_level(self, rms: float) -> None:
         if self._sm.state != RecordingState.RECORDING:
