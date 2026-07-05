@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 _API_KEY_PATTERN = re.compile(r"AIza[A-Za-z0-9_\-]{20,}")
 _WARMUP_ERROR_DISPLAY_S = 10.0
-_UNDO_WINDOW_S = 15.0
 
 
 def _setup_logging() -> None:
@@ -55,7 +54,7 @@ class MurmurApp:
         self._mode = self._settings.default_mode
         self._privacy = False
         self._paused = False
-        self._last_paste_ts = 0.0
+        self._ptt_active = False
         self._hotkey: Optional[HotkeyListener] = None
         self._bar: Optional[MenuBar] = None
         self._onboarding_proc: Optional[subprocess.Popen] = None
@@ -90,8 +89,7 @@ class MurmurApp:
             on_tap=self._handle_tap,
             on_hold_start=self._handle_hold_start,
             on_hold_end=self._handle_hold_end,
-            on_double_tap=self._handle_double_tap,
-            on_hold_cancel=self._cancel_recording,
+            on_hold_cancel=self._handle_hold_cancel,
             on_esc=self._handle_esc,
         )
         self._hotkey.start()
@@ -113,6 +111,7 @@ class MurmurApp:
     def _handle_tap(self) -> None:
         if self._paused:
             return
+        self._ptt_active = False
         action = self._sm.on_tap()
         self._dispatch(action)
 
@@ -121,14 +120,28 @@ class MurmurApp:
             return
         if self._sm.state == RecordingState.IDLE:
             self._sm.on_tap()
+            self._ptt_active = True
             self._begin_recording()
 
     def _handle_hold_end(self) -> None:
-        if self._sm.state == RecordingState.RECORDING:
-            self._sm.on_tap()
+        if not self._ptt_active:
+            # The hold didn't start this recording (e.g. a long Option press
+            # during a tap-toggled dictation), so releasing must not stop it.
+            return
+        self._ptt_active = False
+        if self._sm.stop_if_recording() == "stop_and_process":
             self._end_recording()
 
+    def _handle_hold_cancel(self) -> None:
+        # Only cancel if the hold gesture itself started the recording;
+        # combo typing must never kill a tap-toggled dictation in progress.
+        if not self._ptt_active:
+            return
+        self._ptt_active = False
+        self._cancel_recording()
+
     def _handle_esc(self) -> None:
+        self._ptt_active = False
         self._cancel_recording()
 
     def _cancel_recording(self) -> None:
@@ -185,18 +198,6 @@ class MurmurApp:
         sounds.play("stop")
         self._executor.submit(self._process, audio)
 
-    def _handle_double_tap(self) -> None:
-        if self._paused:
-            return
-        if self._sm.state != RecordingState.IDLE:
-            return
-        if time.time() - self._last_paste_ts > _UNDO_WINDOW_S:
-            self._pill.flash("Nothing to undo", 1.2)
-            return
-        self._last_paste_ts = 0.0
-        output.undo_paste()
-        self._pill.flash("↶ Undid last", 1.5)
-
     def _pick_mode(self) -> str:
         if self._privacy:
             return "raw"
@@ -217,6 +218,14 @@ class MurmurApp:
                 logger.info("No speech detected")
                 if self._sm.state != RecordingState.RECORDING:
                     self._pill.flash("No speech detected", 1.5)
+                # Keep the audio anyway when storage is on: mistranscribed
+                # speech is exactly what the replay feature exists for.
+                audio_path = self._save_audio(audio)
+                if audio_path:
+                    history.append(history.Entry(
+                        ts=time.time(), raw="", cleaned="(no speech detected)",
+                        mode="raw", audio_path=audio_path,
+                    ))
                 return
             mode = self._pick_mode()
             if self._sm.state != RecordingState.RECORDING:
@@ -225,19 +234,24 @@ class MurmurApp:
             cleaned = clean.clean(raw, mode=mode, api_key=self._api_key, vocabulary=vocab)
             t2 = time.time()
             logger.info("TIMING: cleanup=%.2fs (mode=%s, polished=%s)", t2 - t1, mode, clean.was_polished())
-            if cleaned:
-                cleaned = cleaned.rstrip() + " "
+            if not cleaned.strip():
+                if self._sm.state != RecordingState.RECORDING:
+                    self._pill.flash("Nothing to paste", 1.5)
+                # Real speech was captured even though cleanup emptied it;
+                # keep the raw words recoverable from History (and audio).
+                history.append(history.Entry(
+                    ts=time.time(), raw=raw, cleaned=raw,
+                    mode=mode, audio_path=self._save_audio(audio),
+                ))
+                return
+            cleaned = cleaned.rstrip() + " "
             output.paste_text(cleaned)
-            self._last_paste_ts = time.time()
             t3 = time.time()
             logger.info("TIMING: paste=%.2fs total=%.2fs", t3 - t2, t3 - t0)
             if self._sm.state != RecordingState.RECORDING:
                 words = len(cleaned.split())
                 self._pill.flash(f"✓ Pasted ({words} word{'s' if words != 1 else ''})", 1.2)
-            audio_path = ""
-            if self._settings.store_audio and not self._privacy and audio.size > 0:
-                audio_path = str(paths.audio_dir() / f"{int(time.time())}.wav")
-                save_wav(audio, Path(audio_path))
+            audio_path = self._save_audio(audio)
             history.append(history.Entry(
                 ts=time.time(),
                 raw=raw,
@@ -250,6 +264,13 @@ class MurmurApp:
             sounds.play("error")
             if self._sm.state != RecordingState.RECORDING:
                 self._pill.flash("⚠ Dictation failed (see logs)", 2.5)
+
+    def _save_audio(self, audio) -> str:
+        if not (self._settings.store_audio and not self._privacy and audio.size > 0):
+            return ""
+        audio_path = str(paths.audio_dir() / f"{int(time.time())}.wav")
+        save_wav(audio, Path(audio_path))
+        return audio_path
 
     def _update_settings(self, **changes) -> None:
         s = settings_mod.load()
@@ -310,6 +331,26 @@ class MurmurApp:
         if self._onboarding_proc and self._onboarding_proc.poll() is None:
             return
         self._onboarding_proc = subprocess.Popen([sys.executable, "-m", "murmur.onboarding"])
+        threading.Thread(
+            target=self._reload_after_onboarding,
+            args=(self._onboarding_proc,),
+            daemon=True,
+            name="onboarding-watch",
+        ).start()
+
+    def _reload_after_onboarding(self, proc: subprocess.Popen) -> None:
+        """Apply settings the onboarding window saved, without a restart."""
+        proc.wait()
+        old_hotkey = self._settings.hotkey
+        self._settings = settings_mod.load()
+        sounds.enabled = self._settings.play_sounds
+        if self._settings.hotkey != old_hotkey:
+            if self._hotkey:
+                self._hotkey.stop()
+            self._start_hotkey(self._settings.hotkey)
+            if self._bar:
+                self._bar.set_active_hotkey(self._settings.hotkey)
+            logger.info("Hotkey reloaded after onboarding: %s", self._settings.hotkey)
 
     def _rerun_onboarding(self) -> None:
         self._open_settings()

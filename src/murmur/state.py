@@ -40,6 +40,11 @@ class StateMachine:
             return ""
 
     def recording_max_reached(self) -> str:
+        return self.stop_if_recording()
+
+    def stop_if_recording(self) -> str:
+        """Atomic check-and-stop so a hold release and the max-length timer
+        can never both fire, or accidentally start a new recording."""
         with self._lock:
             if self.state == RecordingState.RECORDING:
                 self.state = RecordingState.IDLE

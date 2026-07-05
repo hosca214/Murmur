@@ -97,3 +97,13 @@ def test_cancel_noop_when_idle():
     sm.warmup_complete()
     assert sm.cancel() == ""
     assert sm.state == RecordingState.IDLE
+
+
+def test_stop_if_recording_is_atomic_and_single_shot():
+    sm = StateMachine()
+    sm.warmup_complete()
+    sm.on_tap()
+    assert sm.stop_if_recording() == "stop_and_process"
+    # Second caller (e.g. max-length timer racing a hold release) gets nothing
+    assert sm.stop_if_recording() == ""
+    assert sm.state == RecordingState.IDLE

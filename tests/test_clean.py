@@ -60,7 +60,7 @@ def test_empty_transcript_short_circuits(mocker):
 
 
 def test_no_api_key_uses_local_polish():
-    out = clean.clean("um so the the meeting is at noon", mode="email", api_key="", vocabulary=[])
+    out = clean.clean("um so the meeting is at noon", mode="email", api_key="", vocabulary=[])
     assert out == "So the meeting is at noon."
     assert clean.was_polished() is False
 
@@ -80,8 +80,8 @@ def test_quota_error_marks_model_dead_then_expires(mocker):
     clean._dead_models.clear()
 
 
-def test_local_polish_strips_fillers_and_stutters():
-    assert clean.local_polish("um the the report is uh ready") == "The report is ready."
+def test_local_polish_strips_fillers_only():
+    assert clean.local_polish("um the report is uh ready") == "The report is ready."
     assert clean.local_polish("hello world") == "Hello world."
     assert clean.local_polish("done!") == "Done!"
     assert clean.local_polish("um uh") == ""
@@ -91,6 +91,46 @@ def test_local_polish_keeps_real_words():
     # "umbrella" and "hummus" must not be eaten by the filler pattern
     out = clean.local_polish("bring the umbrella and hummus")
     assert out == "Bring the umbrella and hummus."
+
+
+def test_local_polish_never_rewrites_repeated_words():
+    # Fidelity first: "nine, nine thirty" is real content, not a stutter
+    out = clean.local_polish("the meeting is at nine, nine thirty at the latest")
+    assert out == "The meeting is at nine, nine thirty at the latest."
+    assert clean.local_polish("it was really really good") == "It was really really good."
+
+
+def test_quota_error_detection_is_precise():
+    assert clean._is_quota_error(RuntimeError("429 Too Many Requests")) is True
+    assert clean._is_quota_error(RuntimeError("RESOURCE_EXHAUSTED: quota")) is True
+    assert clean._is_quota_error(RuntimeError("rate limit exceeded")) is True
+    # 'generate'/'generateContent' contains 'rate' but is NOT a quota error
+    assert clean._is_quota_error(
+        RuntimeError("404 models/gemini-x is not found or not supported for generateContent")
+    ) is False
+
+
+def test_hallucination_guard_catches_short_input_fabrication():
+    template = "Hi [Name], I hope you're doing well. I wanted to follow up on our meeting."
+    assert clean._looks_hallucinated("test", template) is True
+    assert clean._looks_hallucinated("test", "Test.") is False
+    assert clean._looks_hallucinated("test test", "Test, test.") is False
+
+
+def test_token_capped_response_is_rejected(mocker):
+    capped = MagicMock()
+    capped.candidates = [MagicMock(finish_reason=2)]
+    capped.text = "truncated half of a long dictation"
+    mock_model = MagicMock()
+    mock_model.generate_content.return_value = capped
+    mocker.patch("murmur.clean.genai.GenerativeModel", return_value=mock_model)
+    mocker.patch("murmur.clean.genai.configure")
+    out = clean.clean(
+        "a long dictation " * 20, mode="email", api_key="fake", vocabulary=[]
+    )
+    # All models return capped output, so cleanup falls back locally
+    assert clean.was_polished() is False
+    assert "truncated" not in out
 
 
 def test_load_vocabulary_strips_blanks(tmp_path):

@@ -21,7 +21,6 @@ You'll be walked through:
 - **Tap Right Option**: start recording. Tap again: stop and paste.
 - **Hold Right Option**: push-to-talk; release to stop.
 - **Esc while recording**: cancel, nothing is pasted.
-- **Double-tap Right Option**: undo the last paste (within 15 seconds).
 - Click the menu bar icon to switch cleanup modes, change the hotkey, toggle sounds or privacy, view history, or edit your vocabulary.
 
 ## What the cleanup does
@@ -30,7 +29,7 @@ You'll be walked through:
 - Resolves self-corrections: "Tuesday, no wait, Wednesday" pastes as "Wednesday".
 - Handles spoken commands like "new paragraph" and "new line".
 - **Auto mode (on by default)** matches tone to the app you're pasting into: casual in Slack and Messages, formal in Mail and Outlook, structured bullets in Notes and Obsidian. Pick a fixed mode from the menu to turn it off.
-- Your clipboard is preserved: whatever you had copied is restored after the paste.
+- Your clipboard is preserved: whatever you had copied is restored about 10 seconds after the paste (and never if you copy something new in between).
 - If Gemini is unreachable, Murmur still cleans fillers locally and pastes; dictation never breaks offline.
 - **Privacy mode** skips Gemini entirely (nothing leaves your Mac) and pastes the raw transcript.
 

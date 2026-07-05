@@ -88,7 +88,14 @@ def save_wav(audio: np.ndarray, path: Path) -> None:
 class Transcriber:
     def __init__(self, model_name: str, compute_type: str) -> None:
         logger.info("Loading Whisper model %s (%s)", model_name, compute_type)
-        self._model = WhisperModel(model_name, device="cpu", compute_type=compute_type)
+        try:
+            # Cached model first: no network round trip, works offline
+            self._model = WhisperModel(
+                model_name, device="cpu", compute_type=compute_type, local_files_only=True
+            )
+        except Exception:
+            logger.info("Model not cached yet; downloading %s", model_name)
+            self._model = WhisperModel(model_name, device="cpu", compute_type=compute_type)
         logger.info("Whisper model loaded")
 
     def transcribe(self, audio: np.ndarray) -> str:

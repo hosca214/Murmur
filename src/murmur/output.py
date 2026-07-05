@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from typing import Optional
 
 import pyperclip
 from Quartz import (
@@ -13,12 +14,21 @@ from Quartz import (
 
 logger = logging.getLogger(__name__)
 _KEY_V = 9
-_KEY_Z = 6
 _PASTE_SETTLE_S = 0.1
-_CLIPBOARD_RESTORE_DELAY_S = 0.7
+# Long enough that (a) slow apps reading the pasteboard after the keystroke
+# still get the dictation, and (b) if the synthetic paste never landed, the
+# user has time to press Cmd+V manually before the old clipboard returns.
+_CLIPBOARD_RESTORE_DELAY_S = 10.0
+
+# Back-to-back dictations inside the restore window must hand the USER'S
+# original clipboard forward, not restore one dictation over another.
+_restore_lock = threading.Lock()
+_pending_previous: Optional[str] = None
+_pending_timer: Optional[threading.Timer] = None
 
 
 def paste_text(text: str, restore_clipboard: bool = True) -> None:
+    global _pending_previous, _pending_timer
     if not text:
         return
     previous = ""
@@ -30,13 +40,28 @@ def paste_text(text: str, restore_clipboard: bool = True) -> None:
     pyperclip.copy(text)
     time.sleep(_PASTE_SETTLE_S)
     _post_cmd_key(_KEY_V)
-    if restore_clipboard and previous and previous != text:
-        timer = threading.Timer(_CLIPBOARD_RESTORE_DELAY_S, _restore_clipboard, args=(previous, text))
-        timer.daemon = True
-        timer.start()
+    if not restore_clipboard:
+        return
+    with _restore_lock:
+        if _pending_timer is not None:
+            # A restore from the previous dictation is still pending: keep
+            # ITS original clipboard, since what we just read was our own paste.
+            _pending_timer.cancel()
+            _pending_timer = None
+            previous = _pending_previous or ""
+        if not previous or previous == text:
+            _pending_previous = None
+            return
+        _pending_previous = previous
+        _pending_timer = threading.Timer(
+            _CLIPBOARD_RESTORE_DELAY_S, _restore_clipboard_cb, args=(previous, text)
+        )
+        _pending_timer.daemon = True
+        _pending_timer.start()
 
 
-def _restore_clipboard(previous: str, pasted: str) -> None:
+def _restore_clipboard_cb(previous: str, pasted: str) -> None:
+    global _pending_previous, _pending_timer
     try:
         # Only restore if the clipboard still holds our pasted text;
         # if the user copied something in between, leave theirs alone.
@@ -44,10 +69,10 @@ def _restore_clipboard(previous: str, pasted: str) -> None:
             pyperclip.copy(previous)
     except Exception:
         logger.debug("Clipboard restore skipped", exc_info=True)
-
-
-def undo_paste() -> None:
-    _post_cmd_key(_KEY_Z)
+    finally:
+        with _restore_lock:
+            _pending_previous = None
+            _pending_timer = None
 
 
 def _post_cmd_key(keycode: int) -> None:

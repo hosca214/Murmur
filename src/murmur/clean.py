@@ -16,12 +16,13 @@ MODELS_FALLBACK = (
     "gemini-flash-latest",
     "gemini-2.0-flash",
 )
-_GEN_CONFIG = {"max_output_tokens": 1024, "temperature": 0.0}
+_GEN_CONFIG = {"max_output_tokens": 8192, "temperature": 0.0}
 _DEAD_MODEL_RETRY_S = 3600.0
 _dead_models: dict[str, float] = {}
+_MAX_TOKENS_FINISH = 2  # google.generativeai FinishReason.MAX_TOKENS
 
 _FILLER_PATTERN = re.compile(r"\b(?:um+|uh+|uhm+|erm+|hmm+)\b[,.]?\s*", re.IGNORECASE)
-_REPEAT_PATTERN = re.compile(r"\b(\w+)(,?\s+\1)+\b", re.IGNORECASE)
+_QUOTA_PATTERN = re.compile(r"\b429\b|quota|resource_exhausted|rate.?limit", re.IGNORECASE)
 
 
 def was_polished() -> bool:
@@ -72,10 +73,10 @@ def warm(api_key: str) -> None:
 
 
 def local_polish(text: str) -> str:
-    """Offline cleanup used when Gemini is unavailable: strip fillers and
-    stutters, tidy spacing, capitalize, and close the sentence."""
+    """Offline cleanup used when Gemini is unavailable. Fidelity first:
+    only unambiguous fillers are removed; the user's words are never
+    reordered, collapsed, or rewritten."""
     out = _FILLER_PATTERN.sub("", text)
-    out = _REPEAT_PATTERN.sub(r"\1", out)
     out = re.sub(r"\s+([,.!?;:])", r"\1", out)
     out = re.sub(r"[ \t]{2,}", " ", out).strip()
     out = re.sub(r"^[,.;:\s]+", "", out)
@@ -127,6 +128,9 @@ def clean(transcript: str, *, mode: str, api_key: str, vocabulary: list[str]) ->
                 request_options={"timeout": 5},
                 generation_config=_GEN_CONFIG,
             )
+            if _hit_token_cap(response):
+                logger.warning("Model %s hit the output token cap; trying next model", name)
+                continue
             cleaned = response.text.strip()
             if _looks_hallucinated(transcript, cleaned):
                 logger.warning(
@@ -147,13 +151,22 @@ def clean(transcript: str, *, mode: str, api_key: str, vocabulary: list[str]) ->
     return local_polish(transcript)
 
 
+def _hit_token_cap(response) -> bool:
+    try:
+        candidate = response.candidates[0]
+        return int(candidate.finish_reason) == _MAX_TOKENS_FINISH
+    except Exception:
+        return False
+
+
 def _looks_hallucinated(raw: str, cleaned: str) -> bool:
     raw_len = len(raw.strip())
     if raw_len == 0:
         return len(cleaned) > 0
-    return len(cleaned) > max(raw_len * 3, raw_len + 200)
+    # Short inputs are the most hallucination-prone, so keep the ceiling
+    # tight there: a 4-char "test" must not come back as a 100-char email.
+    return len(cleaned) > max(raw_len * 3, 60)
 
 
 def _is_quota_error(exc: Exception) -> bool:
-    s = str(exc).lower()
-    return "429" in s or "quota" in s or "resource_exhausted" in s or "rate" in s
+    return bool(_QUOTA_PATTERN.search(str(exc)))

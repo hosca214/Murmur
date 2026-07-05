@@ -1,6 +1,4 @@
-import time
-
-from murmur.app import MurmurApp, _UNDO_WINDOW_S
+from murmur.app import MurmurApp
 from murmur.settings import Settings
 
 
@@ -14,7 +12,7 @@ def make_app(auto_mode: bool, privacy: bool = False, mode: str = "email") -> Mur
 
 def test_privacy_forces_raw(mocker):
     app = make_app(auto_mode=True, privacy=True)
-    detect = mocker.patch("murmur.frontmost.detect_mode")
+    detect = mocker.patch("murmur.app.frontmost.detect_mode")
     assert app._pick_mode() == "raw"
     detect.assert_not_called()
 
@@ -32,21 +30,41 @@ def test_manual_mode_skips_detection(mocker):
     detect.assert_not_called()
 
 
-def test_double_tap_undo_respects_window(mocker):
+def test_hold_end_ignored_for_tap_toggled_recording(mocker):
+    # A long bare Option press during a tap-toggled dictation must not stop it
     app = make_app(auto_mode=False)
-    app._paused = False
-    app._last_paste_ts = time.time() - (_UNDO_WINDOW_S + 1)
+    app._ptt_active = False
+    app._sm = mocker.MagicMock()
+    end = mocker.patch.object(app, "_end_recording")
+    app._handle_hold_end()
+    app._sm.stop_if_recording.assert_not_called()
+    end.assert_not_called()
 
-    class FakeSM:
-        state = __import__("murmur.state", fromlist=["RecordingState"]).RecordingState.IDLE
 
-    app._sm = FakeSM()
-    app._pill = mocker.MagicMock()
-    undo = mocker.patch("murmur.app.output.undo_paste")
-    app._handle_double_tap()
-    undo.assert_not_called()
-    app._pill.flash.assert_called_once()
+def test_hold_end_stops_ptt_recording(mocker):
+    app = make_app(auto_mode=False)
+    app._ptt_active = True
+    app._sm = mocker.MagicMock()
+    app._sm.stop_if_recording.return_value = "stop_and_process"
+    end = mocker.patch.object(app, "_end_recording")
+    app._handle_hold_end()
+    end.assert_called_once()
+    assert app._ptt_active is False
 
-    app._last_paste_ts = time.time() - 2
-    app._handle_double_tap()
-    undo.assert_called_once()
+
+def test_hold_cancel_ignored_for_tap_toggled_recording(mocker):
+    # Option+E combo typing while a tap-toggled dictation runs: keep recording
+    app = make_app(auto_mode=False)
+    app._ptt_active = False
+    cancel = mocker.patch.object(app, "_cancel_recording")
+    app._handle_hold_cancel()
+    cancel.assert_not_called()
+
+
+def test_hold_cancel_cancels_ptt_recording(mocker):
+    app = make_app(auto_mode=False)
+    app._ptt_active = True
+    cancel = mocker.patch.object(app, "_cancel_recording")
+    app._handle_hold_cancel()
+    cancel.assert_called_once()
+    assert app._ptt_active is False
