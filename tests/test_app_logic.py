@@ -68,3 +68,10 @@ def test_hold_cancel_cancels_ptt_recording(mocker):
     app._handle_hold_cancel()
     cancel.assert_called_once()
     assert app._ptt_active is False
+
+
+def test_menubar_has_quit_application():
+    # Regression: rumps.App has no quit_application; MenuBar must define it
+    # or clicking "Quit Murmur" raises AttributeError and the app never quits
+    from murmur.ui.bar import MenuBar
+    assert callable(getattr(MenuBar, "quit_application", None))

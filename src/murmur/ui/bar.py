@@ -128,6 +128,10 @@ class MenuBar(rumps.App):
     def set_hotkey_warning(self, warn: bool) -> None:
         self.title = "⚠ Murmur" if warn else "Murmur"
 
+    def quit_application(self) -> None:
+        # rumps.App has no quit method; quitting is a module-level call
+        rumps.quit_application()
+
     def _refresh_history(self, sender) -> None:
         sender.clear()
         for entry in history.load(limit=20):
