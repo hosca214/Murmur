@@ -21,7 +21,13 @@ class MenuBar(rumps.App):
         on_quit: Callable[[], None],
         on_diagnostics: Callable[[], str],
     ) -> None:
-        super().__init__("Murmur", icon=str(_ASSETS / "icon-idle.png"), template=True, quit_button=None)
+        super().__init__(
+            "Murmur",
+            title="Murmur",
+            icon=str(_ASSETS / "icon-idle.png"),
+            template=True,
+            quit_button=None,
+        )
         self._on_mode_change = on_mode_change
         self._on_pause_toggle = on_pause_toggle
         self._on_privacy_toggle = on_privacy_toggle
@@ -76,7 +82,7 @@ class MenuBar(rumps.App):
         self.menu["Privacy mode"].state = 1 if privacy else 0
 
     def set_hotkey_warning(self, warn: bool) -> None:
-        self.title = "⚠ Murmur" if warn else ""
+        self.title = "⚠ Murmur" if warn else "Murmur"
 
     def _refresh_history(self, sender) -> None:
         sender.clear()

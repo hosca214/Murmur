@@ -88,6 +88,18 @@ class OnboardingWindow:
         self._step += 1
         self._render()
 
+    def _prev(self) -> None:
+        if self._step > 0:
+            self._step -= 1
+            self._render()
+
+    def _nav(self, next_btn: tk.Button) -> None:
+        nav = tk.Frame(self._frame)
+        nav.pack(fill="x", side="bottom", pady=10)
+        if self._step > 0:
+            tk.Button(nav, text="← Back", command=self._prev).pack(side="left")
+        next_btn.pack(in_=nav, side="right")
+
     def _heading(self, text: str) -> None:
         tk.Label(self._frame, text=text, font=("SF Pro", 18, "bold")).pack(anchor="w", pady=(0, 10))
 
@@ -141,7 +153,7 @@ class OnboardingWindow:
 
         tk.Button(self._frame, text="Test key", command=test_key).pack(anchor="w", pady=4)
         tk.Label(self._frame, text="Stored only at ~/.murmur/.env on this Mac.", fg="gray").pack(anchor="w", pady=4)
-        next_btn.pack(anchor="e", pady=10)
+        self._nav(next_btn)
 
     def _build_step_permissions(self) -> None:
         self._heading("Step 2 of 5 — Grant macOS permissions")
@@ -157,7 +169,7 @@ class OnboardingWindow:
             tk.Label(row, text=f"• {name} — {why}").pack(side="left")
             tk.Button(row, text="Open Settings", command=lambda p=pane: _open_settings_pane(p)).pack(side="right")
         tk.Label(self._frame, text="(Restart Murmur after granting if asked.)", fg="gray").pack(anchor="w", pady=8)
-        tk.Button(self._frame, text="Next →", command=self._next).pack(anchor="e", pady=10)
+        self._nav(tk.Button(self._frame, text="Next →", command=self._next))
 
     def _build_step_hotkey(self) -> None:
         self._heading("Step 3 of 5 — Choose your hotkey")
@@ -178,7 +190,7 @@ class OnboardingWindow:
             settings_mod.save(s2)
             self._next()
 
-        tk.Button(self._frame, text="Next →", command=save_and_next).pack(anchor="e", pady=10)
+        self._nav(tk.Button(self._frame, text="Next →", command=save_and_next))
 
     def _build_step_audio(self) -> None:
         self._heading("Step 4 of 5 — Audio storage")
@@ -197,7 +209,7 @@ class OnboardingWindow:
             settings_mod.save(s2)
             self._next()
 
-        tk.Button(self._frame, text="Next →", command=save_and_next).pack(anchor="e", pady=10)
+        self._nav(tk.Button(self._frame, text="Next →", command=save_and_next))
 
     def _build_step_test(self) -> None:
         self._heading("Step 5 of 5 — You're ready")
@@ -206,4 +218,8 @@ class OnboardingWindow:
             "and tap the hotkey again. The text should appear at your cursor.\n\n"
             "You can re-run this onboarding anytime from the menu bar → Help → Re-run onboarding."
         )
-        tk.Button(self._frame, text="Done", command=self._next).pack(anchor="e", pady=10)
+        self._nav(tk.Button(self._frame, text="Done", command=self._next))
+
+
+if __name__ == "__main__":
+    OnboardingWindow(on_finish=lambda: None).run()

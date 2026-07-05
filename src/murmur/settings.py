@@ -17,7 +17,6 @@ def _default_model() -> str:
 class Settings:
     schema_version: int = SCHEMA_VERSION
     hotkey: str = "right_option"
-    replay_hotkey: str = "cmd+option+v"
     tap_threshold_ms: int = 250
     model: str = field(default_factory=_default_model)
     compute_type: str = "int8"

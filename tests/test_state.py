@@ -1,5 +1,3 @@
-import pytest
-
 from murmur.state import RecordingState, StateMachine
 
 
@@ -22,13 +20,13 @@ def test_tap_during_idle_starts_recording():
     assert sm.state == RecordingState.RECORDING
 
 
-def test_tap_during_recording_starts_processing():
+def test_tap_during_recording_stops_and_processes():
     sm = StateMachine()
     sm.warmup_complete()
     sm.on_tap()
     action = sm.on_tap()
     assert action == "stop_and_process"
-    assert sm.state == RecordingState.TRANSCRIBING
+    assert sm.state == RecordingState.IDLE
 
 
 def test_tap_during_cold_start_queues_recording():
@@ -47,60 +45,19 @@ def test_warmup_complete_with_queued_tap_starts_recording():
     assert sm.state == RecordingState.RECORDING
 
 
-def test_tap_during_transcribing_queues_one():
+def test_warmup_complete_only_fires_once():
     sm = StateMachine()
     sm.warmup_complete()
-    sm.on_tap()
-    sm.on_tap()
-    action = sm.on_tap()
-    assert action == "queue_next"
-    assert sm.state == RecordingState.TRANSCRIBING
-    assert sm.queued_tap is True
+    assert sm.warmup_complete() is None
 
 
-def test_tap_during_cleaning_cancels_cleanup():
+def test_tap_toggles_recording_repeatedly():
     sm = StateMachine()
     sm.warmup_complete()
-    sm.on_tap()
-    sm.on_tap()
-    sm.transcription_complete()
-    action = sm.on_tap()
-    assert action == "cancel_cleanup_and_paste_raw"
-
-
-def test_tap_during_pasting_queues_next():
-    sm = StateMachine()
-    sm.warmup_complete()
-    sm.on_tap()
-    sm.on_tap()
-    sm.transcription_complete()
-    sm.cleaning_complete()
-    action = sm.on_tap()
-    assert action == "queue_next"
-
-
-def test_pipeline_complete_returns_to_idle():
-    sm = StateMachine()
-    sm.warmup_complete()
-    sm.on_tap()
-    sm.on_tap()
-    sm.transcription_complete()
-    sm.cleaning_complete()
-    sm.paste_complete()
+    for _ in range(3):
+        assert sm.on_tap() == "start_recording"
+        assert sm.on_tap() == "stop_and_process"
     assert sm.state == RecordingState.IDLE
-
-
-def test_pipeline_complete_starts_queued_recording():
-    sm = StateMachine()
-    sm.warmup_complete()
-    sm.on_tap()
-    sm.on_tap()
-    sm.on_tap()
-    sm.transcription_complete()
-    sm.cleaning_complete()
-    action = sm.paste_complete()
-    assert action == "start_recording"
-    assert sm.state == RecordingState.RECORDING
 
 
 def test_max_recording_auto_stops():
@@ -109,4 +66,11 @@ def test_max_recording_auto_stops():
     sm.on_tap()
     action = sm.recording_max_reached()
     assert action == "stop_and_process"
-    assert sm.state == RecordingState.TRANSCRIBING
+    assert sm.state == RecordingState.IDLE
+
+
+def test_max_recording_noop_when_idle():
+    sm = StateMachine()
+    sm.warmup_complete()
+    assert sm.recording_max_reached() == ""
+    assert sm.state == RecordingState.IDLE

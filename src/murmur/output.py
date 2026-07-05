@@ -12,6 +12,7 @@ from Quartz import (
 
 logger = logging.getLogger(__name__)
 _KEY_V = 9
+_KEY_Z = 6
 
 
 def paste_text(text: str) -> None:
@@ -19,14 +20,18 @@ def paste_text(text: str) -> None:
         return
     pyperclip.copy(text)
     time.sleep(0.05)
-    _post_cmd_v()
+    _post_cmd_key(_KEY_V)
 
 
-def _post_cmd_v() -> None:
-    down = CGEventCreateKeyboardEvent(None, _KEY_V, True)
+def undo_paste() -> None:
+    _post_cmd_key(_KEY_Z)
+
+
+def _post_cmd_key(keycode: int) -> None:
+    down = CGEventCreateKeyboardEvent(None, keycode, True)
     CGEventSetFlags(down, kCGEventFlagMaskCommand)
     CGEventPost(kCGHIDEventTap, down)
-    up = CGEventCreateKeyboardEvent(None, _KEY_V, False)
+    up = CGEventCreateKeyboardEvent(None, keycode, False)
     CGEventSetFlags(up, kCGEventFlagMaskCommand)
     CGEventPost(kCGHIDEventTap, up)
 

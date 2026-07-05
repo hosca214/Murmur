@@ -6,7 +6,6 @@ def test_load_returns_defaults_when_file_missing(tmp_app_support):
     s = settings.load()
     assert s.schema_version == 1
     assert s.hotkey == "right_option"
-    assert s.replay_hotkey == "cmd+option+v"
     assert s.tap_threshold_ms == 250
     assert s.model in {"base.en", "small.en"}
     assert s.compute_type == "int8"

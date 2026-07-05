@@ -8,8 +8,12 @@ logger = logging.getLogger(__name__)
 
 class _NSPanelPill:
     def __init__(self) -> None:
+        import AppKit  # noqa: F401  — probe import; build lazily on first show
+        self._panel = None
+        self._label = None
+
+    def _build(self) -> None:
         from AppKit import (
-            NSApplication,
             NSBackingStoreBuffered,
             NSColor,
             NSFloatingWindowLevel,
@@ -21,12 +25,10 @@ class _NSPanelPill:
         )
         from Foundation import NSMakeRect
 
-        self._AppKit = NSApplication.sharedApplication()
-        self._w, self._h = 220, 44
+        w, h = 220, 44
         screen = NSScreen.mainScreen().frame()
-        x = (screen.size.width - self._w) / 2
-        y = 80
-        rect = NSMakeRect(x, y, self._w, self._h)
+        x = (screen.size.width - w) / 2
+        rect = NSMakeRect(x, 80, w, h)
         mask = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
         self._panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, mask, NSBackingStoreBuffered, False
@@ -35,7 +37,7 @@ class _NSPanelPill:
         self._panel.setOpaque_(False)
         self._panel.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0.0, 0.85))
         self._panel.setHasShadow_(True)
-        self._label = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 10, self._w, 24))
+        self._label = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 10, w, 24))
         self._label.setBezeled_(False)
         self._label.setDrawsBackground_(False)
         self._label.setEditable_(False)
@@ -49,6 +51,8 @@ class _NSPanelPill:
         from PyObjCTools import AppHelper
 
         def _do():
+            if self._panel is None:
+                self._build()
             self._label.setStringValue_(text)
             self._panel.orderFront_(None)
 
@@ -56,7 +60,12 @@ class _NSPanelPill:
 
     def hide(self) -> None:
         from PyObjCTools import AppHelper
-        AppHelper.callAfter(self._panel.orderOut_, None)
+
+        def _do():
+            if self._panel is not None:
+                self._panel.orderOut_(None)
+
+        AppHelper.callAfter(_do)
 
 
 class _TkPill:

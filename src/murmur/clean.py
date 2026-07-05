@@ -9,11 +9,13 @@ logger = logging.getLogger(__name__)
 _last_polished = False
 _VALID_MODES = {"email", "chat", "notes", "raw"}
 MODELS_FALLBACK = (
+    "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
+    "gemini-flash-latest",
     "gemini-2.0-flash",
-    "gemini-1.5-flash-latest",
 )
-_working_model: str = ""
+_GEN_CONFIG = {"max_output_tokens": 1024, "temperature": 0.0}
+_dead_models: set[str] = set()
 
 
 def was_polished() -> bool:
@@ -50,25 +52,45 @@ def clean(transcript: str, *, mode: str, api_key: str, vocabulary: list[str]) ->
         vocabulary=_format_vocabulary(vocabulary),
         transcript=transcript,
     )
-    global _working_model
     genai.configure(api_key=api_key)
-    candidates = []
-    if _working_model:
-        candidates.append(_working_model)
-    candidates.extend(m for m in MODELS_FALLBACK if m != _working_model)
     last_exc: Optional[Exception] = None
-    for name in candidates:
+    for name in MODELS_FALLBACK:
+        if name in _dead_models:
+            continue
         try:
             model = genai.GenerativeModel(name)
-            response = model.generate_content(prompt, request_options={"timeout": 30})
-            _working_model = name
+            response = model.generate_content(
+                prompt,
+                request_options={"timeout": 5},
+                generation_config=_GEN_CONFIG,
+            )
+            cleaned = response.text.strip()
+            if _looks_hallucinated(transcript, cleaned):
+                logger.warning(
+                    "Hallucination guard: %s expanded %d→%d; trying next model",
+                    name, len(transcript), len(cleaned),
+                )
+                continue
             _last_polished = True
-            return response.text.strip()
+            return cleaned
         except Exception as exc:
             last_exc = exc
-            logger.debug("Gemini model %s unavailable: %s", name, exc)
-            if _working_model == name:
-                _working_model = ""
-    logger.warning("Gemini cleanup failed; falling back to raw: %s", last_exc)
+            logger.debug("Gemini model %s failed: %s", name, exc)
+            if _is_quota_error(exc):
+                _dead_models.add(name)
+                logger.info("Marked %s as quota-exhausted for this session", name)
+    logger.warning("All Gemini models failed or hallucinated; using raw. Last error: %s", last_exc)
     _last_polished = False
     return transcript
+
+
+def _looks_hallucinated(raw: str, cleaned: str) -> bool:
+    raw_len = len(raw.strip())
+    if raw_len == 0:
+        return len(cleaned) > 0
+    return len(cleaned) > max(raw_len * 3, raw_len + 200)
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return "429" in s or "quota" in s or "resource_exhausted" in s or "rate" in s

@@ -14,7 +14,7 @@ SAMPLE_RATE = 16000
 
 
 class AudioRecorder:
-    def __init__(self, max_seconds: int) -> None:
+    def __init__(self, max_seconds: int, level_callback=None) -> None:
         self._max_seconds = max_seconds
         self._chunks: list[np.ndarray] = []
         self._stream: Optional[sd.InputStream] = None
@@ -22,6 +22,7 @@ class AudioRecorder:
         self._start_time: float = 0.0
         self._auto_stop_timer: Optional[threading.Timer] = None
         self._auto_stop_callback = None
+        self._level_callback = level_callback
 
     def start(self, on_auto_stop=None) -> None:
         with self._lock:
@@ -44,6 +45,12 @@ class AudioRecorder:
         if status:
             logger.debug("Audio status: %s", status)
         self._chunks.append(indata.copy())
+        if self._level_callback is not None:
+            try:
+                rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
+                self._level_callback(rms)
+            except Exception:
+                pass
 
     def _auto_stop(self) -> None:
         if self._auto_stop_callback:
@@ -90,7 +97,8 @@ class Transcriber:
         segments, _info = self._model.transcribe(
             audio,
             language="en",
+            beam_size=1,
             vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 500},
+            vad_parameters={"min_silence_duration_ms": 300},
         )
         return " ".join(seg.text.strip() for seg in segments).strip()

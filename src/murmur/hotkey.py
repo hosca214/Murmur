@@ -33,15 +33,20 @@ class HotkeyListener:
         on_tap: Callable[[], None],
         on_hold_start: Callable[[], None],
         on_hold_end: Callable[[], None],
+        on_double_tap: Optional[Callable[[], None]] = None,
+        double_tap_window_ms: int = 300,
     ) -> None:
         self._key = resolve_key(key_name)
         self._threshold_s = tap_threshold_ms / 1000.0
+        self._double_tap_window_s = double_tap_window_ms / 1000.0
         self._on_tap = on_tap
         self._on_hold_start = on_hold_start
         self._on_hold_end = on_hold_end
+        self._on_double_tap = on_double_tap
         self._press_time: Optional[float] = None
         self._hold_active = False
         self._hold_timer: Optional[threading.Timer] = None
+        self._last_tap_time: float = 0.0
         self._listener: Optional[keyboard.Listener] = None
         self._lock = threading.Lock()
 
@@ -91,10 +96,19 @@ class HotkeyListener:
             was_hold = self._hold_active
             self._press_time = None
             self._hold_active = False
+            now = time.time()
+            is_double = (
+                not was_hold
+                and self._on_double_tap is not None
+                and (now - self._last_tap_time) < self._double_tap_window_s
+            )
+            self._last_tap_time = 0.0 if is_double else now
         try:
             if was_hold:
                 self._on_hold_end()
             else:
                 self._on_tap()
+                if is_double:
+                    self._on_double_tap()
         except Exception:
             logger.exception("hotkey callback raised")
