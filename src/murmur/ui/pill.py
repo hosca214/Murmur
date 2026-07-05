@@ -5,10 +5,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+_W, _H = 280, 40
+
 
 class _NSPanelPill:
     def __init__(self) -> None:
-        import AppKit  # noqa: F401  — probe import; build lazily on first show
+        import AppKit  # noqa: F401  (probe import); build lazily on first show
         self._panel = None
         self._label = None
 
@@ -17,6 +19,7 @@ class _NSPanelPill:
             NSBackingStoreBuffered,
             NSColor,
             NSFloatingWindowLevel,
+            NSFont,
             NSPanel,
             NSScreen,
             NSTextField,
@@ -25,27 +28,37 @@ class _NSPanelPill:
         )
         from Foundation import NSMakeRect
 
-        w, h = 220, 44
         screen = NSScreen.mainScreen().frame()
-        x = (screen.size.width - w) / 2
-        rect = NSMakeRect(x, 80, w, h)
+        x = (screen.size.width - _W) / 2
+        rect = NSMakeRect(x, 80, _W, _H)
         mask = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
         self._panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, mask, NSBackingStoreBuffered, False
         )
         self._panel.setLevel_(NSFloatingWindowLevel)
         self._panel.setOpaque_(False)
-        self._panel.setBackgroundColor_(NSColor.colorWithCalibratedWhite_alpha_(0.0, 0.85))
+        self._panel.setBackgroundColor_(NSColor.clearColor())
         self._panel.setHasShadow_(True)
-        self._label = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 10, w, 24))
+        self._panel.setIgnoresMouseEvents_(True)
+        # 1<<0 canJoinAllSpaces, 1<<8 fullScreenAuxiliary: follow the user everywhere
+        self._panel.setCollectionBehavior_((1 << 0) | (1 << 8))
+        content = self._panel.contentView()
+        content.setWantsLayer_(True)
+        layer = content.layer()
+        layer.setCornerRadius_(_H / 2)
+        layer.setBackgroundColor_(
+            NSColor.colorWithCalibratedWhite_alpha_(0.08, 0.92).CGColor()
+        )
+        self._label = NSTextField.alloc().initWithFrame_(NSMakeRect(12, (_H - 20) / 2, _W - 24, 20))
         self._label.setBezeled_(False)
         self._label.setDrawsBackground_(False)
         self._label.setEditable_(False)
         self._label.setSelectable_(False)
         self._label.setAlignment_(2)
         self._label.setTextColor_(NSColor.whiteColor())
+        self._label.setFont_(NSFont.systemFontOfSize_(13))
         self._label.setStringValue_("Murmur")
-        self._panel.contentView().addSubview_(self._label)
+        content.addSubview_(self._label)
 
     def show(self, text: str) -> None:
         from PyObjCTools import AppHelper
@@ -101,8 +114,13 @@ class _TkPill:
 
 
 class Pill:
+    """Thread-safe wrapper with a generation counter so a delayed flash()
+    hide can never clobber a newer show() (e.g. the next recording)."""
+
     def __init__(self) -> None:
         self._impl = None
+        self._gen = 0
+        self._lock = threading.Lock()
         try:
             self._impl = _NSPanelPill()
             logger.info("Pill: using NSPanel")
@@ -111,7 +129,26 @@ class Pill:
             self._impl = _TkPill()
 
     def show(self, text: str) -> None:
-        self._impl.show(text)
+        with self._lock:
+            self._gen += 1
+            self._impl.show(text)
 
     def hide(self) -> None:
-        self._impl.hide()
+        with self._lock:
+            self._gen += 1
+            self._impl.hide()
+
+    def flash(self, text: str, duration_s: float = 1.5) -> None:
+        with self._lock:
+            self._gen += 1
+            token = self._gen
+            self._impl.show(text)
+
+        def _maybe_hide() -> None:
+            with self._lock:
+                if self._gen == token:
+                    self._impl.hide()
+
+        timer = threading.Timer(duration_s, _maybe_hide)
+        timer.daemon = True
+        timer.start()

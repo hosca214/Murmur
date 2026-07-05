@@ -21,6 +21,8 @@ class Settings:
     model: str = field(default_factory=_default_model)
     compute_type: str = "int8"
     default_mode: str = "email"
+    auto_mode: bool = True
+    play_sounds: bool = True
     store_audio: bool = False
     audio_retention_days: int = 7
     history_size: int = 20

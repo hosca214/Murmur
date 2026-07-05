@@ -107,11 +107,11 @@ class OnboardingWindow:
         tk.Label(self._frame, text=text, justify="left", wraplength=540).pack(anchor="w", pady=(0, 10))
 
     def _build_step_key(self) -> None:
-        self._heading("Step 1 of 5 — Get a Gemini API key")
+        self._heading("Step 1 of 5: Get a Gemini API key")
         self._body(
             "Murmur uses Google's free Gemini Flash to clean up your dictations. "
-            "Free tier is 1 million tokens/day — far more than you'll use.\n\n"
-            "1. Click 'Get my key' below — opens aistudio.google.com/apikey in your browser.\n"
+            "Free tier is 1 million tokens/day, far more than you'll use.\n\n"
+            "1. Click 'Get my key' below (opens aistudio.google.com/apikey in your browser).\n"
             "2. Sign in with your Google account.\n"
             "3. Click the blue 'Create API key' button (top-right).\n"
             "4. Choose 'Create API key in new project'.\n"
@@ -156,7 +156,7 @@ class OnboardingWindow:
         self._nav(next_btn)
 
     def _build_step_permissions(self) -> None:
-        self._heading("Step 2 of 5 — Grant macOS permissions")
+        self._heading("Step 2 of 5: Grant macOS permissions")
         self._body("Murmur needs three permissions. Click each 'Open Settings' button, toggle Murmur on, then come back.")
         rows = [
             ("Microphone", "mic", "Capture your voice"),
@@ -166,13 +166,13 @@ class OnboardingWindow:
         for name, pane, why in rows:
             row = tk.Frame(self._frame)
             row.pack(fill="x", pady=4)
-            tk.Label(row, text=f"• {name} — {why}").pack(side="left")
+            tk.Label(row, text=f"• {name}: {why}").pack(side="left")
             tk.Button(row, text="Open Settings", command=lambda p=pane: _open_settings_pane(p)).pack(side="right")
         tk.Label(self._frame, text="(Restart Murmur after granting if asked.)", fg="gray").pack(anchor="w", pady=8)
         self._nav(tk.Button(self._frame, text="Next →", command=self._next))
 
     def _build_step_hotkey(self) -> None:
-        self._heading("Step 3 of 5 — Choose your hotkey")
+        self._heading("Step 3 of 5: Choose your hotkey")
         self._body("Default is Right Option. Tap to toggle, hold > 250ms for push-to-talk.")
         s = settings_mod.load()
         var = tk.StringVar(value=s.hotkey)
@@ -193,7 +193,7 @@ class OnboardingWindow:
         self._nav(tk.Button(self._frame, text="Next →", command=save_and_next))
 
     def _build_step_audio(self) -> None:
-        self._heading("Step 4 of 5 — Audio storage")
+        self._heading("Step 4 of 5: Audio storage")
         self._body(
             "Want Murmur to keep audio of your last 20 dictations? Useful for replaying mistranscriptions. "
             "Audio never leaves your Mac. Auto-purges after 7 days. (Privacy mode disables this anyway.)"
@@ -212,7 +212,7 @@ class OnboardingWindow:
         self._nav(tk.Button(self._frame, text="Next →", command=save_and_next))
 
     def _build_step_test(self) -> None:
-        self._heading("Step 5 of 5 — You're ready")
+        self._heading("Step 5 of 5: You're ready")
         self._body(
             "Try it: press your hotkey, say 'Hello, this is my first Murmur dictation,' "
             "and tap the hotkey again. The text should appear at your cursor.\n\n"

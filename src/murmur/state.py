@@ -45,3 +45,13 @@ class StateMachine:
                 self.state = RecordingState.IDLE
                 return "stop_and_process"
             return ""
+
+    def cancel(self) -> str:
+        with self._lock:
+            if self.state == RecordingState.RECORDING:
+                self.state = RecordingState.IDLE
+                return "cancel_recording"
+            if self.state == RecordingState.COLD_START and self.queued_tap:
+                self.queued_tap = False
+                return "cancel_queued"
+            return ""

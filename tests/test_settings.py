@@ -10,6 +10,8 @@ def test_load_returns_defaults_when_file_missing(tmp_app_support):
     assert s.model in {"base.en", "small.en"}
     assert s.compute_type == "int8"
     assert s.default_mode == "email"
+    assert s.auto_mode is True
+    assert s.play_sounds is True
     assert s.store_audio is False
     assert s.audio_retention_days == 7
     assert s.history_size == 20

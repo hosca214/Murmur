@@ -74,3 +74,26 @@ def test_max_recording_noop_when_idle():
     sm.warmup_complete()
     assert sm.recording_max_reached() == ""
     assert sm.state == RecordingState.IDLE
+
+
+def test_cancel_while_recording():
+    sm = StateMachine()
+    sm.warmup_complete()
+    sm.on_tap()
+    assert sm.cancel() == "cancel_recording"
+    assert sm.state == RecordingState.IDLE
+
+
+def test_cancel_clears_queued_tap_during_cold_start():
+    sm = StateMachine()
+    sm.on_tap()
+    assert sm.queued_tap is True
+    assert sm.cancel() == "cancel_queued"
+    assert sm.queued_tap is False
+
+
+def test_cancel_noop_when_idle():
+    sm = StateMachine()
+    sm.warmup_complete()
+    assert sm.cancel() == ""
+    assert sm.state == RecordingState.IDLE
